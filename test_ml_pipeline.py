@@ -1,8 +1,10 @@
 import json
 import os
 import unittest
+
 import joblib
 import pandas as pd
+
 
 class TestMLPipeline(unittest.TestCase):
     def test_dataset_created(self):
@@ -15,7 +17,7 @@ class TestMLPipeline(unittest.TestCase):
         self.assertTrue(os.path.exists("metrics.json"))
 
     def test_accuracy_is_valid(self):
-        with open("metrics.json", "r") as file:
+        with open("metrics.json", "r", encoding="utf-8") as file:
             metrics = json.load(file)
         accuracy = metrics["accuracy"]
         self.assertGreaterEqual(accuracy, 0.0)
@@ -27,7 +29,7 @@ class TestMLPipeline(unittest.TestCase):
             "attendance": 85,
             "internal_marks": 75,
             "assignment_marks": 80,
-            "previous_score": 78
+            "previous_score": 78,
         }])
         prediction = model.predict(sample)[0]
         self.assertIn(int(prediction), [0, 1])
@@ -38,10 +40,9 @@ class TestMLPipeline(unittest.TestCase):
             "attendance": 90,
             "internal_marks": 85,
             "assignment_marks": 88,
-            "previous_score": 80
+            "previous_score": 80,
         }])
-        prediction = model.predict(sample)[0]
-        self.assertEqual(int(prediction), 1)
+        self.assertEqual(int(model.predict(sample)[0]), 1)
 
     def test_low_performance_student(self):
         model = joblib.load("student_result_model.pkl")
@@ -49,10 +50,10 @@ class TestMLPipeline(unittest.TestCase):
             "attendance": 55,
             "internal_marks": 30,
             "assignment_marks": 40,
-            "previous_score": 35
+            "previous_score": 35,
         }])
-        prediction = model.predict(sample)[0]
-        self.assertEqual(int(prediction), 0)
+        self.assertEqual(int(model.predict(sample)[0]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

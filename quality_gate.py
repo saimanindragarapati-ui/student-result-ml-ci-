@@ -4,12 +4,10 @@ import sys
 MINIMUM_ACCURACY = 0.85
 
 print("Reading model evaluation metrics...")
-
-with open("metrics.json", "r") as file:
+with open("metrics.json", "r", encoding="utf-8") as file:
     metrics = json.load(file)
 
 accuracy = metrics["accuracy"]
-
 print("Model Accuracy   :", round(accuracy, 4))
 print("Required Accuracy:", MINIMUM_ACCURACY)
 

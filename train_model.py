@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+
 def create_dataset():
     rng = np.random.default_rng(42)
     number_of_students = 300
@@ -15,7 +16,7 @@ def create_dataset():
         "attendance": rng.integers(50, 101, number_of_students),
         "internal_marks": rng.integers(20, 101, number_of_students),
         "assignment_marks": rng.integers(30, 101, number_of_students),
-        "previous_score": rng.integers(30, 101, number_of_students)
+        "previous_score": rng.integers(30, 101, number_of_students),
     })
     data["weighted_score"] = (
         0.25 * data["attendance"]
@@ -23,9 +24,9 @@ def create_dataset():
         + 0.20 * data["assignment_marks"]
         + 0.20 * data["previous_score"]
     )
-    # 1 = PASS, 0 = FAIL
     data["result"] = (data["weighted_score"] >= 60).astype(int)
     return data
+
 
 def train_model():
     print("Creating dataset...")
@@ -38,34 +39,27 @@ def train_model():
         "attendance",
         "internal_marks",
         "assignment_marks",
-        "previous_score"
+        "previous_score",
     ]
     X = data[features]
     y = data["result"]
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.20,
-        random_state=42,
-        stratify=y
+        X, y, test_size=0.20, random_state=42, stratify=y
     )
-
     print("Training records:", len(X_train))
     print("Testing records :", len(X_test))
 
     model = Pipeline([
         ("scaler", StandardScaler()),
-        ("classifier", LogisticRegression(max_iter=1000, random_state=42))
+        ("classifier", LogisticRegression(max_iter=1000, random_state=42)),
     ])
-
     print("Training model...")
     model.fit(X_train, y_train)
 
     predictions = model.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
     matrix = confusion_matrix(y_test, predictions)
-
     print("\nModel Evaluation")
     print("----------------")
     print("Accuracy:", round(accuracy, 4))
@@ -78,14 +72,13 @@ def train_model():
     metrics = {
         "accuracy": float(accuracy),
         "training_records": len(X_train),
-        "testing_records": len(X_test)
+        "testing_records": len(X_test),
     }
-
-    with open("metrics.json", "w") as file:
+    with open("metrics.json", "w", encoding="utf-8") as file:
         json.dump(metrics, file, indent=4)
     print("Metrics saved as metrics.json")
-
     return accuracy
+
 
 if __name__ == "__main__":
     train_model()
