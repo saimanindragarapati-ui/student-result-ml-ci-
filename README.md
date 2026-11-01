@@ -1,39 +1,56 @@
-# Student Result Prediction — Practical 5 (Continuous Delivery)
+# Student Result Prediction - Practical 6: Dockerize the ML Prediction Application
 
-This repository contains the student-result ML training pipeline and a Flask prediction API. Practical-5 extends the earlier CI workflow into Continuous Delivery by creating a release candidate only after the model quality gate, ML tests, and API tests pass.
+This practical continues Practical-5 by adding Docker configuration and preparing a Docker-ready release candidate through GitHub Actions. The Docker image is built and run manually on the local machine; automatic Docker build and validation in GitHub Actions is reserved for Practical-7.
 
-## Workflow
+## Files added
 
-1. Install dependencies.
-2. Train the student-result model and save `student_result_model.pkl` plus `metrics.json`.
-3. Enforce the 0.85 minimum-accuracy quality gate.
-4. Run the ML pipeline tests.
-5. Run the Flask API tests.
-6. Package `app.py`, the trained model, metrics, dependencies, and deployment instructions.
-7. Upload the `student-result-ml-release` artifact.
+- `Dockerfile`: Python 3.11 slim image, installs `requirements.txt`, copies the Flask app, trained model, and metrics, exposes port 5000, and starts `app.py`.
+- `.dockerignore`: excludes Python caches, Git metadata, tests, generated CSV data, and the local release-candidate directory from the Docker build context.
+- `.github/workflows/ml-ci.yml`: retains the Practical-5 training, quality-gate, and tests, then includes `Dockerfile` and `.dockerignore` in the `student-result-ml-release` artifact.
 
-## Run locally
+## Build and run locally
+
+First, download the `student-result-ml-release` artifact from a successful GitHub Actions run and extract it. Run these commands from the extracted folder containing `Dockerfile`:
 
 ```bash
-python -m pip install -r requirements.txt
-python train_model.py
-python quality_gate.py
-python -m unittest test_ml_pipeline.py -v
-python -m unittest test_app.py -v
-python app.py
+docker --version
+docker info
+docker build -t student-result-ml:1.0 .
+docker images
+docker run -d --name student-result-ml-container -p 5000:5000 student-result-ml:1.0
+docker ps
 ```
 
-The health endpoint is `GET /`. The prediction endpoint is `POST /predict` and requires `attendance`, `internal_marks`, `assignment_marks`, and `previous_score` in its JSON body.
+Health check:
 
-Example request:
-
-```json
-{
-  "attendance": 90,
-  "internal_marks": 85,
-  "assignment_marks": 88,
-  "previous_score": 80
-}
+```bash
+curl http://localhost:5000/
 ```
 
-The workflow prepares a release candidate; production deployment is a separate step.
+High-performing sample (expected class: PASS):
+
+```bash
+curl -X POST http://localhost:5000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"attendance":90,"internal_marks":85,"assignment_marks":88,"previous_score":80}'
+```
+
+Low-performing sample (expected class: FAIL):
+
+```bash
+curl -X POST http://localhost:5000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"attendance":55,"internal_marks":30,"assignment_marks":40,"previous_score":35}'
+```
+
+Inspect logs and clean up:
+
+```bash
+docker logs student-result-ml-container
+docker stop student-result-ml-container
+docker rm student-result-ml-container
+```
+
+## Important scope
+
+Practical-6 prepares and uploads a Docker-ready release candidate. It does not build a Docker image in GitHub Actions. That automation is introduced in Practical-7.
