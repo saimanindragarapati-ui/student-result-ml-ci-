@@ -1,0 +1,109 @@
+name: Student Result Prediction - Build, Test and Publish to GHCR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: student-result-ml
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Train model for clean CI build context
+        run: python train_model.py
+
+      - name: Run ML quality gate
+        run: python quality_gate.py
+
+      - name: Run ML pipeline tests
+        run: python -m unittest test_ml_pipeline.py -v
+
+      - name: Run prediction API tests
+        run: python -m unittest test_app.py -v
+
+      - name: Create lowercase GHCR image name
+        run: |
+          IMAGE_ID="${REGISTRY}/${{ github.repository_owner }}/${IMAGE_NAME}"
+          IMAGE_ID=$(echo "$IMAGE_ID" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_ID=$IMAGE_ID" >> "$GITHUB_ENV"
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE_ID:ci" .
+
+      - name: Start test container
+        run: |
+          docker run -d \
+            --name student-result-ml-ci \
+            -p 5000:5000 \
+            "$IMAGE_ID:ci"
+
+      - name: Test API health endpoint
+        run: |
+          for attempt in {1..20}; do
+            if curl --fail --silent http://localhost:5000/health; then
+              echo "Health check passed."
+              exit 0
+            fi
+            echo "Waiting for API... attempt ${attempt}"
+            sleep 3
+          done
+          echo "Health check failed."
+          docker logs student-result-ml-ci
+          exit 1
+
+      - name: Test prediction endpoint
+        run: |
+          response=$(curl --fail --silent --show-error \
+            -X POST http://localhost:5000/predict \
+            -H "Content-Type: application/json" \
+            --data '{"attendance":90,"internal_marks":85,"assignment_marks":90,"previous_score":88}')
+          echo "Prediction response: ${response}"
+          echo "${response}" | grep -q '"prediction":"PASS"'
+          echo "${response}" | grep -q '"prediction_code":1'
+
+      - name: Show container logs
+        if: always()
+        run: docker logs student-result-ml-ci || true
+
+      - name: Remove test container
+        if: always()
+        run: docker rm -f student-result-ml-ci || true
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            docker login "$REGISTRY" \
+              -u "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Tag tested image
+        run: |
+          docker tag "$IMAGE_ID:ci" "$IMAGE_ID:latest"
+          docker tag "$IMAGE_ID:ci" "$IMAGE_ID:sha-${{ github.sha }}"
+
+      - name: Push tested image to GHCR
+        run: |
+          docker push "$IMAGE_ID:latest"
+          docker push "$IMAGE_ID:sha-${{ github.sha }}"
