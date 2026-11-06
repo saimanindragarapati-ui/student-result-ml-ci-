@@ -65,6 +65,7 @@ jobs:
             if curl --fail --silent http://localhost:5000/health; then
               echo "Health check passed."
               exit 0
+              
             fi
             echo "Waiting for API... attempt ${attempt}"
             sleep 3
@@ -82,7 +83,14 @@ jobs:
           echo "Prediction response: ${response}"
           echo "${response}" | grep -q '"prediction":"PASS"'
           echo "${response}" | grep -q '"prediction_code":1'
-
+      - name: Test Prometheus metrics endpoint
+        run: |
+          response=$(curl --fail --silent --show-error \
+            http://localhost:5000/metrics)
+          echo "$response" | grep -q 'student_api_http_requests_total'
+          echo "$response" | grep -q 'student_api_model_loaded'
+          echo "$response" | grep -q 'student_api_predictions_total'
+          echo "Prometheus metrics endpoint test passed."
       - name: Show container logs
         if: always()
         run: docker logs student-result-ml-ci || true

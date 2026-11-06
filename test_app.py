@@ -12,7 +12,6 @@ class TestPredictionApplication(unittest.TestCase):
 
     def test_health_endpoint(self):
         response = self.client.get("/health")
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["status"], "ok")
         self.assertTrue(response.headers.get("X-Request-ID"))
@@ -22,7 +21,6 @@ class TestPredictionApplication(unittest.TestCase):
             "/health",
             headers={"X-Request-ID": "practical-11-test"}
         )
-
         self.assertEqual(
             response.headers.get("X-Request-ID"),
             "practical-11-test"
@@ -38,7 +36,6 @@ class TestPredictionApplication(unittest.TestCase):
                 "previous_score": 80
             }
         )
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["prediction"], "PASS")
         self.assertEqual(response.get_json()["prediction_code"], 1)
@@ -53,38 +50,23 @@ class TestPredictionApplication(unittest.TestCase):
                 "previous_score": 35
             }
         )
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["prediction"], "FAIL")
         self.assertEqual(response.get_json()["prediction_code"], 0)
 
     def test_missing_field_validation(self):
-        with self.assertLogs(
-            "student-result-api",
-            level="WARNING"
-        ) as captured:
-
+        with self.assertLogs("student-result-api", level="WARNING") as captured:
             response = self.client.post(
                 "/predict",
-                json={
-                    "attendance": 90,
-                    "internal_marks": 85
-                }
+                json={"attendance": 90, "internal_marks": 85}
             )
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("missing_fields", response.get_json())
-        self.assertIn(
-            "event=validation_error",
-            "\n".join(captured.output)
-        )
+        self.assertIn("event=validation_error", "\n".join(captured.output))
 
     def test_invalid_numeric_input(self):
-        with self.assertLogs(
-            "student-result-api",
-            level="WARNING"
-        ) as captured:
-
+        with self.assertLogs("student-result-api", level="WARNING") as captured:
             response = self.client.post(
                 "/predict",
                 json={
@@ -96,36 +78,18 @@ class TestPredictionApplication(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn(
-            "event=validation_error",
-            "\n".join(captured.output)
-        )
+        self.assertIn("event=validation_error", "\n".join(captured.output))
 
     def test_unknown_route(self):
-        with self.assertLogs(
-            "student-result-api",
-            level="WARNING"
-        ) as captured:
-
+        with self.assertLogs("student-result-api", level="WARNING") as captured:
             response = self.client.get("/not-a-real-route")
 
         self.assertEqual(response.status_code, 404)
-        self.assertIn(
-            "event=route_not_found",
-            "\n".join(captured.output)
-        )
+        self.assertIn("event=route_not_found", "\n".join(captured.output))
 
     def test_prediction_runtime_error(self):
-        with patch(
-            "app.model.predict",
-            side_effect=RuntimeError("synthetic failure")
-        ):
-
-            with self.assertLogs(
-                "student-result-api",
-                level="ERROR"
-            ) as captured:
-
+        with patch("app.model.predict", side_effect=RuntimeError("synthetic failure")):
+            with self.assertLogs("student-result-api", level="ERROR") as captured:
                 response = self.client.post(
                     "/predict",
                     json={
@@ -137,14 +101,65 @@ class TestPredictionApplication(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 500)
-        self.assertEqual(
-            response.get_json(),
-            {"error": "Prediction failed"}
+        self.assertEqual(response.get_json(), {"error": "Prediction failed"})
+        self.assertIn("event=prediction_failed", "\n".join(captured.output))
+
+    # Practical-12 Prometheus tests
+
+    def test_prometheus_metrics_endpoint(self):
+        response = self.client.get("/metrics")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/plain", response.content_type)
+
+        metrics_text = response.get_data(as_text=True)
+
+        self.assertIn("student_api_http_requests_total", metrics_text)
+        self.assertIn("student_api_http_request_duration_seconds", metrics_text)
+        self.assertIn("student_api_predictions_total", metrics_text)
+        self.assertIn("student_api_model_loaded 1.0", metrics_text)
+
+    def test_successful_prediction_metric(self):
+        before = self.client.get("/metrics").get_data(as_text=True)
+
+        response = self.client.post(
+            "/predict",
+            json={
+                "attendance": 90,
+                "internal_marks": 85,
+                "assignment_marks": 88,
+                "previous_score": 80
+            }
         )
 
+        after = self.client.get("/metrics").get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
         self.assertIn(
-            "event=prediction_failed",
-            "\n".join(captured.output)
+            'student_api_predictions_total{result="success"}',
+            after
+        )
+        self.assertNotEqual(before, after)
+
+    def test_failed_prediction_metric(self):
+        with patch("app.model.predict", side_effect=RuntimeError("synthetic failure")):
+            response = self.client.post(
+                "/predict",
+                json={
+                    "attendance": 90,
+                    "internal_marks": 85,
+                    "assignment_marks": 88,
+                    "previous_score": 80
+                }
+            )
+
+        self.assertEqual(response.status_code, 500)
+
+        metrics_text = self.client.get("/metrics").get_data(as_text=True)
+
+        self.assertIn(
+            'student_api_predictions_total{result="error"}',
+            metrics_text
         )
 
 

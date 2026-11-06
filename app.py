@@ -7,9 +7,16 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
-from flask import Flask, g, jsonify, request
+from flask import Flask, Response, g, jsonify, request
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
-# Configure logging to standard output
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -30,11 +37,35 @@ FEATURES = [
     "previous_score",
 ]
 
-# Do not log full student input data
 SAFE_INPUT_FIELDS = set()
 
+# ---------------- PROMETHEUS METRICS ----------------
 
-# Load the existing trained model
+HTTP_REQUESTS = Counter(
+    "student_api_http_requests",
+    "Total HTTP requests received by the API",
+    ["method", "path", "status"],
+)
+
+HTTP_LATENCY = Histogram(
+    "student_api_http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "path"],
+)
+
+PREDICTIONS = Counter(
+    "student_api_predictions",
+    "Total prediction attempts",
+    ["result"],
+)
+
+MODEL_LOADED = Gauge(
+    "student_api_model_loaded",
+    "Whether the ML model is loaded",
+)
+
+# ---------------- MODEL LOADING ----------------
+
 def load_model():
     logger.info("event=model_load_started model_file=%s", MODEL_PATH.name)
 
@@ -47,11 +78,14 @@ def load_model():
 
         loaded_model = joblib.load(MODEL_PATH)
 
+        MODEL_LOADED.set(1)
+
         logger.info("event=model_loaded model_file=%s", MODEL_PATH.name)
 
         return loaded_model
 
     except Exception:
+        MODEL_LOADED.set(0)
         logger.exception("event=model_load_failed")
         raise
 
@@ -63,7 +97,8 @@ except Exception:
     raise
 
 
-# Request tracking middleware
+# ---------------- REQUEST TRACKING ----------------
+
 @app.before_request
 def start_request_tracking():
     supplied_id = request.headers.get("X-Request-ID", "").strip()
@@ -74,9 +109,25 @@ def start_request_tracking():
 
 @app.after_request
 def log_request(response):
-    duration_ms = (
-        time.perf_counter() - g.request_started_at
-    ) * 1000
+
+    duration_seconds = time.perf_counter() - g.request_started_at
+    duration_ms = duration_seconds * 1000
+
+    # Do not count Prometheus scraping as an application request
+    if request.path != "/metrics":
+
+        route = request.url_rule.rule if request.url_rule else "unmatched"
+
+        HTTP_REQUESTS.labels(
+            method=request.method,
+            path=route,
+            status=str(response.status_code),
+        ).inc()
+
+        HTTP_LATENCY.labels(
+            method=request.method,
+            path=route,
+        ).observe(duration_seconds)
 
     level = (
         logging.WARNING
@@ -86,12 +137,11 @@ def log_request(response):
 
     logger.log(
         level,
-        "event=http_request request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
-        g.request_id,
-        request.method,
-        request.path,
-        response.status_code,
-        duration_ms,
+        f"event=http_request request_id={g.request_id} "
+        f"method={request.method} "
+        f"path={request.path} "
+        f"status={response.status_code} "
+        f"duration_ms={duration_ms:.2f}",
     )
 
     response.headers["X-Request-ID"] = g.request_id
@@ -99,7 +149,18 @@ def log_request(response):
     return response
 
 
-# Handle missing routes
+# ---------------- PROMETHEUS ENDPOINT ----------------
+
+@app.get("/metrics")
+def metrics():
+    return Response(
+        generate_latest(),
+        content_type=CONTENT_TYPE_LATEST,
+    )
+
+
+# ---------------- ERROR HANDLING ----------------
+
 @app.errorhandler(404)
 def handle_not_found(error):
     logger.warning(
@@ -111,7 +172,6 @@ def handle_not_found(error):
     return jsonify({"error": "Not found"}), 404
 
 
-# Handle unexpected application errors
 @app.errorhandler(Exception)
 def handle_unexpected_error(error):
     logger.exception(
@@ -123,7 +183,8 @@ def handle_unexpected_error(error):
     return jsonify({"error": "Internal server error"}), 500
 
 
-# Health endpoint
+# ---------------- HEALTH ENDPOINT ----------------
+
 @app.get("/")
 @app.get("/health")
 def health_check():
@@ -133,7 +194,8 @@ def health_check():
     })
 
 
-# Prediction endpoint
+# ---------------- PREDICTION ENDPOINT ----------------
+
 @app.post("/predict")
 def predict():
 
@@ -208,6 +270,8 @@ def predict():
             "PASS" if prediction_code == 1 else "FAIL"
         )
 
+        PREDICTIONS.labels(result="success").inc()
+
         logger.info(
             "event=prediction_success request_id=%s prediction=%s",
             g.request_id,
@@ -220,6 +284,8 @@ def predict():
         })
 
     except Exception:
+        PREDICTIONS.labels(result="error").inc()
+
         logger.exception(
             "event=prediction_failed request_id=%s",
             g.request_id,
@@ -229,6 +295,8 @@ def predict():
             "error": "Prediction failed"
         }), 500
 
+
+# ---------------- APPLICATION START ----------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
